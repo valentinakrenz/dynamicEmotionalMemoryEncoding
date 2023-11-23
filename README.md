@@ -9,9 +9,9 @@ to extract univariate parameters and run RSAs, the beta images in data/processed
 extract_trialwise_betaImages_from4Dgz.ipynb shows how to do this using Python
 
 run_in_parfor.m runs the following functions parallelized over subjects
-- trialwise_parameterextraction for univaraite parameterextraction
-- create_trialwise_t_values to transform beta-images into t-images
-- RSA_EES runs RSA analyses on these t-images
+- trialwise_parameterextraction.m for univaraite parameterextraction
+- create_trialwise_t_values.m to transform beta-images into t-images
+- RSA_EES.m runs RSA analyses on these t-images
 
 results are stored in data/neuro/extracted and are used for statistical analyses in R
 
