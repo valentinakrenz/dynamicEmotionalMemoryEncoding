@@ -1,7 +1,7 @@
 # dynamicEmotionalMemoryEncoding
 Code and data for the manuscript "Memory boost for recurring emotional events is driven by initial amygdala response and stable neocortical patterns across encoding repetitions" by Valentina Krenz, Arjen Alink, Benno Roozendaal, Tobias Sommer, and Lars Schwabe.
 
-### raw and processed data is stored on OSF:
+### raw and processed data are stored at OSF
 https://osf.io/8eztf/?view_only=b2f5b2bda8734e299d0e25b36cc23651
 
 ### univariate parameterextraction and RSAs
