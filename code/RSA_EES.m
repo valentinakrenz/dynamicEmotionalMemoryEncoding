@@ -73,7 +73,7 @@ for r=1:nRois
     ROIdata.([RoiNames(r).name(1:end-4) '_RSMs'])=corr(squeeze(RoiBetas)'); %correlates beta values across images for each voxel within the ROI
 end
 
-%% SAVE ITEM WISE FISHER Z-TRANSFORMED ITEM-WISE EES VALUES IN OUTPUT TABLE
+%% SAVE FISHER Z-TRANSFORMED ITEM-WISE EES VALUES IN OUTPUT TABLE
 
 EESTable = table('Size',[0 6],'VariableTypes',{'string','string','string','string','string','double'},...
     'VariableNames',{'sj','ROI','EncRuns','emotion','itemType','EES'});
