@@ -1,5 +1,4 @@
 %% TRANSFORM TRIALWISE BETAS TO TRIALWISE T-IMAGED
-% easy batch by Valentina Krenz
 
 function create_trialwise_t_values(sj, dataFolder) 
 
