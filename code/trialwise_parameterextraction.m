@@ -7,7 +7,7 @@ VPFolder = dir(strcat(input_dir,'sj-', sprintf('%03d', sj),'_*'));
 vpName = VPFolder.name;
 vpPath = [input_dir vpName filesep];
 subFolder = 'firstlevel\trialwiseGLM\';
-betas_imgs = spm_select('FPList',[vpPath subFolder],'^beta.*nii$'); % change to your naming %i would like to read in t images
+betas_imgs = spm_select('FPList',[vpPath subFolder],'^beta.*nii$'); % change to your naming 
 nBetas = 180;
 
 %% define ROIs
