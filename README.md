@@ -2,7 +2,7 @@
 
 code for the manuscript 
 "**Memory boost for recurring emotional events is driven by initial amygdala response and stable neocortical patterns across encoding repetitions**" 
-by Valentina Krenz, Arjen Alink, Benno Roozendaal, Tobias Sommer, and Lars Schwabe (submitted)
+by Valentina Krenz, Arjen Alink, Benno Roozendaal, Tobias Sommer, and Lars Schwabe (in prep)
 
 ---
 ### raw and processed data are stored at OSF
