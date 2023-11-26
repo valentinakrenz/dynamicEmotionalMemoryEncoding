@@ -5,17 +5,17 @@ code for the manuscript
 by Valentina Krenz, Arjen Alink, Benno Roozendaal, Tobias Sommer, and Lars Schwabe (in prep)
 
 ---
-### raw and processed data are stored at at the research repository of University Hamburg
+### raw and processed data are stored at the research repository of University Hamburg
 
 ---
 ### univariate parameterextraction and RSAs
 to extract univariate parameters and run RSAs, the beta images as *fMRI_processed.7z* need to be unzipped and transformed from 4D to 3D images
-**extract_trialwise_betaImages_from4Dgz.ipynb** shows how to do this using Python
+**fmri_paramExtract/extract_trialwise_betaImages_from4Dgz.ipynb** shows how to do this using Python
 
 **fmri_paramExtract/run_in_parfor.m** runs the following functions parallelized over subjects
 - **fmri_paramExtract/trialwise_parameterextraction.m** for univaraite parameterextraction
-- **fmri_paramExtract/create_trialwise_t_values.m** to transform beta-images into t-images
-- **fmri_paramExtract/RSA_EES.m** runs RSA analyses on these t-images
+- **fmri_paramExtract/create_trialwise_t_values.m** to transform beta-images into *t*-images
+- **fmri_paramExtract/RSA_EES.m** runs RSA analyses on these *t*-images
 
 results are stored at the repository as *fmri_extracted.7z* and are used for statistical analyses in R
 
