@@ -1,0 +1,2162 @@
+---
+title: "Memory boost for recurring emotional events is driven by initial amygdala response and stable neocortical patterns across encoding repetitions"
+author: "Valentina Krenz"
+date: "November 26, 2023"
+output: 
+  html_document:
+    fig_with: 4
+    fig_height: 3
+---
+
+#### R version 4.2.2 in Rstudio Version 2022.12.0+353 
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(parallel)
+
+# prepare data sharing between python and R codes
+library(reticulate)# to work with Python
+
+# To use a specific Python executable
+use_python("C:/ProgramData/Anaconda3-2019/python.exe", required = TRUE)
+
+library(knitr) # to knit tables
+library(plotrix)
+library(readxl) #importing data from excel
+library(writexl) # saving data to excel
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(parallel)
+library(ltm) #masks select from dplyr#
+library(psych)#for descriptive statistics
+library(emmeans) 
+library(lme4) #for lmer / glmer -> mixed effects model
+library(lmerTest) #show p_values in mixed effetcs model
+library(optimx)
+library(ggh4x)
+library(svglite)  
+library(cowplot)
+library(ggpubr)
+library(tidyr)
+library(effsize)
+library(purrr)
+library(cowplot)
+library(boot)
+library(boot.pval)
+library(lme4)
+library(parallel)
+library(showtext)
+library("curl")
+font_add_google("Roboto Condensed", "Roboto Condensed")
+showtext.auto()
+options(scipen=999) #don't use scientific notation for p-values
+
+# define dirs ####
+# Set the working directory to the folder of the script
+current_dir <- dirname(rstudioapi::getSourceEditorContext()$path)
+print(current_dir)
+setwd(current_dir)
+
+# Check initial working directory
+print(paste("Initial working directory:", getwd()))
+
+# Check value of current_dir
+current_dir <- dirname(rstudioapi::getSourceEditorContext()$path)
+print(paste("Current Directory Attempted:", current_dir))
+
+# Attempt to set working directory
+setwd_result <- setwd(current_dir)
+
+# Check if the operation was successful
+if (is.null(setwd_result)) {
+  print(paste("Working directory after setwd:", getwd()))
+} else {
+  print("Failed to set working directory.")
+}
+
+# Define relative paths for input and output directories
+output_dir <- file.path("..", "results", "R_results")
+plot_dir <- file.path("..", "results","R_plots")
+# Create output directory if it doesn't exist
+if (!dir.exists(plot_dir)) {
+  dir.create(plot_dir, recursive = TRUE)
+}
+
+input_dir <- file.path("..", "results")
+
+# Create output directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+paramExtr_folder <- 'paramExtr'
+
+# load my functions ####
+source("my_functions/run_LMM_for_ROI.R")
+source("my_functions/get_mixed_df.R")
+source("my_functions/prepare_bootstrapped_CIs.R")
+source("my_functions/make_diff_marginal_plots.R")
+source("my_functions/run_FDR_cor.R") # also includes function extract_results
+source("my_functions/extract_results.R") # also includes function extract_results
+source("my_functions/get_posthoc_trends.R")
+source("my_functions/rounding.R")
+source("my_functions/plot_free_recall.R")
+source("my_functions/get_emmeans_emtrends.R")
+source("my_functions/rename_effect.R")
+source("my_functions/bootstrap_CI.R")
+source("my_functions/get_all_contrast_df.R")
+source("my_functions/print_peak_stats.R")
+source("my_functions/print_non_sign_LMM_summary.R")
+source("my_functions/analyze_posthoc_effects.R") # check what drives three-way interaction in each ROI and add label
+source("my_functions/EES_int_marginal_plots.R") # plots for EES
+# mediation
+source("my_functions/extract_mediation_summary.R")
+# function for running mediation analysis
+source("my_functions/mediation_analysis.R")
+# function to infer mediation type
+source("my_functions/determine_mediation.R")
+# print fitted models 
+source("my_functions/print_mediation_model_resuts.R")
+# print conditional direct and indirect effects
+source("my_functions/print_conditional_mediation_effects.R")
+# inference statistical testing of index of moderated mediation via bootstrapping
+source("my_functions/bootstrap_index_of_moderated_mediation.R")
+source("my_functions/run_bootstrap.R")
+# plot index moderated mediation
+source("my_functions/plot_index_moderated_mediation.R")
+
+```
+#### Python Version 3.7
+```{python, echo=F, warning=F, message=F}
+import warnings
+warnings.filterwarnings('ignore')
+# import packages
+import nibabel as nib
+from nilearn import plotting, image, datasets, surface
+from nilearn.plotting import view_img
+import pandas as pd
+import numpy as np
+import os
+import shutil
+import glob
+import matplotlib.patches as mpatches
+import collections
+from collections import Counter
+import matplotlib.pyplot as plt
+import networkx as nx
+from itertools import combinations
+import scipy.ndimage as ndi
+import re
+from nilearn.image.resampling import coord_transform 
+from nibabel.affines import apply_affine
+import pickle
+
+# change to your paths
+full_roi_path = 'I:/EncMem/ROIs/cortex_17networks/' #'../ROIs/' # folder with ROIs 
+stat_path = '../results/R_results/' # where is data with t-values
+output_path = '../results/' # where to save plots and t-images
+
+# Check if the directory exists
+if not os.path.exists(output_path):
+    # If not, create the directory
+    os.makedirs(output_path)
+    
+# Define path to the brain template if you want to run plot_effect_clusters.py
+mni_ims = "tpl-MNI152NLin2009cAsym_res-01_desc-brain_T1w.nii.gz" # replace with path to mni template image
+
+# Fetch the Harvard Oxford atlas
+atlas = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-1mm')
+atlas_img = atlas.maps
+# Access the labels
+atlas_labels = atlas.labels
+atlas_data = atlas_img.get_fdata()
+
+# Fetch the AAL atlas
+aal = datasets.fetch_atlas_aal(version='SPM12')
+# Load the AAL atlas image
+aal_atlas_img = nib.load(aal.maps)
+aal_atlas_data = aal_atlas_img.get_fdata()
+#
+# load my python functions
+# get MNI coordinates of a ROI
+exec(open("my_functions/get_non_zero_mni_coordinates.py").read())
+# find overlapp of significant region with atlas labels
+# I used these codes because the naming of the Schaefer atlas is not always informative enough
+# can be also used for naming clusters from voxel-wise analyses, e.g. from SPM 
+exec(open("my_functions/get_atlas_label.py").read())
+exec(open("my_functions/calculate_roi_overlap.py").read())
+exec(open("my_functions/calculate_overlap_from_hoa.py").read())
+exec(open("my_functions/calculate_overlap_from_aal.py").read())
+# find maximal overlap
+exec(open("my_functions/add_max_overlap_columns.py").read())
+# find center coordinate (can be used for plotting and extracting label from atlas)
+exec(open("my_functions/find_center_coordinates.py").read())
+# looad nifti as binary image
+exec(open("my_functions/load_nii_as_binary.py").read())
+# find adjacent ROIs, i.e. clusters
+exec(open("my_functions/find_clusters.py").read())
+# assign t-value from LMM to all voxels in a ROI
+exec(open("my_functions/setup_t_map.py").read())
+# to manually insert colour code to corresponding t value
+exec(open("my_functions/get_rgb_from_matrix.py").read())
+exec(open("my_functions/add_full_label.py").read())
+exec(open("my_functions/shorten_labels.py").read())
+exec(open("my_functions/plot_effect_clusters.py").read())
+
+```
+
+***
+## **Emotional Enhancement of immediate free recall** 
+- read in **freeRecall.df** for analysis of free recall perfomance
+- read in **emoRating.df** for analyses of valence- and arousal rating 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+file_name <- 'freeRecall'
+behav_df <- read.xlsx(file.path(input_dir, paste0(file_name, '_df.xlsx'))) %>%
+  mutate(sj = factor(sj),
+         item = factor(item),
+        subsMemory = factor(subsMemory, levels=c(0,1)),
+         emotion = factor(emotion, levels = c("neutral", "negative")))
+
+# valence and arousal rating
+file_name <- 'emoRating'
+rating_df <- read.xlsx(file.path(input_dir, paste0(file_name, '_df.xlsx'))) %>%
+  mutate(sj = factor(sj),
+         item = factor(item),
+         emotion = factor(emotion, levels = c("neutral", "negative"))) %>%
+  filter(sj != 'sj055') # drop this one because he doesn't have free recall data
+
+behav_df <- merge(behav_df, rating_df[, c("sj", "emotion", "item", 
+                                               "arousal_rating",
+                                               "valence_rating")], 
+                   by=c("sj", "emotion", "item"), all.x=TRUE)
+
+# missed responses during encoding run to fixation cross
+file_name <- 'encoding'
+fixation_df <- read_xlsx(file.path(input_dir, paste0(file_name, '_df.xlsx'))) %>%
+  mutate(sj = factor(sj),
+         run = factor(run),
+         run_num = as.numeric(run),
+         run_centered = run_num - 2, # mean centered linear increase predictor
+         emotion = factor(emotion, levels=c("neutral", "negative")))%>%
+  filter(sj != 'sj055') # drop this one because he doesn't have free recall data
+
+merged_df <- merge(fixation_df, behav_df, by = c("sj", "item", "emotion")) %>%
+          mutate(subsMemory = factor(subsMemory, levels =c(0,1)))
+
+```
+<br><br>
+
+#### **Participants stayed attentive throughout the encoding task** 
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+# Calculate the percentage of missed responses per subject
+missed_responses_agg <- merged_df %>%
+  group_by(sj) %>%
+  dplyr::summarise(missed_responses_pct = mean(missedResponse) * 100)
+
+# Calculate M and SEM for missed responses
+descriptive_stats <- missed_responses_agg %>%
+  dplyr::summarise(
+    mean_pct_missed = mean(missed_responses_pct),
+    sem_pct_missed = sd(missed_responses_pct)/sqrt(n())
+  )
+
+cat(paste0(
+  "\n On average, participants missed only ", round(descriptive_stats$mean_pct_missed, 3), "% (SEM = ",
+  round(descriptive_stats$sem_pct_missed, 3), ") of all responses during the encoding task.\n"
+))
+
+# analyze missed responses based on 
+model <- glmer(missedResponse ~ run_centered * emotion * subsMemory + (1 | sj), 
+               data = merged_df, family = "binomial", 
+               control=glmerControl(optimizer="bobyqa", 
+               optCtrl=list(maxfun=2e5)))
+
+fixation_results <- as.data.frame(summary(model)$coefficients)
+fixation_results["fixed_effects"] <- rownames(fixation_results)
+rownames(fixation_results) <- NULL
+
+fixation_results <- fixation_results %>%
+  filter(fixed_effects != "(Intercept)") %>%
+  mutate(effect = rename_effect(fixed_effects))
+
+# Calculate confidence intervals for the fixed effects
+conf_int <- as.data.frame(confint(model, method = "Wald")) 
+conf_int["fixed_effects"] <- rownames(conf_int)
+rownames(conf_int) <- NULL
+conf_int <- conf_int %>%
+  filter(fixed_effects != "(Intercept)" &
+           fixed_effects != ".sig01") %>%
+  left_join(fixation_results, by = "fixed_effects")%>%
+  mutate(lower_CI = `2.5 %`,
+         upper_CI = `97.5 %`,
+         p = `Pr(>|z|)`,
+         z = `z value`,
+         "\u03B2" = Estimate) %>%
+  dplyr::select(-`2.5 %`, -`97.5 %`, -fixed_effects, -`Std. Error`, -`Pr(>|z|)`, -Estimate, -`z value`)%>%
+  dplyr::select(effect, "ß", lower_CI, upper_CI, z, p)
+conf_int <- round_three(conf_int)
+conf_int <- round_p(conf_int, p_col = ncol(conf_int))
+
+# Print the table using kable
+knitr::kable(conf_int, caption = "analysis of missed responses by means of a trial-wise LMM", 
+             format = "markdown", digits = 3)
+
+# Calculate the percentage of missed responses per subject and run
+missed_responses_agg <- merged_df %>%
+  group_by(sj, run) %>%
+  dplyr::summarise(missed_responses_pct = mean(missedResponse) * 100)
+
+# Calculate M and SEM for missed responses per run
+descriptive_stats_run <- missed_responses_agg %>%
+  group_by(run) %>%
+  dplyr::summarise(
+    mean_pct_missed = mean(missed_responses_pct),
+    sem_pct_missed = sd(missed_responses_pct)/sqrt(n())
+  )
+
+cat(paste0("\n\n Missed reponses stayed low across runs: \n"))
+
+for (r in unique(descriptive_stats_run$run)){
+  
+ descriptive_stats <- descriptive_stats_run[descriptive_stats_run$run == r, ]
+ 
+ cat(paste0(
+  "Participants missed only ", round(descriptive_stats$mean_pct_missed, 3), "% (SEM = ",
+  round(descriptive_stats$sem_pct_missed, 3), ") of all responses during run ", r, ".\n"
+)) 
+}
+
+```
+
+<br><br>
+
+#### **Emotionally negative items were perceived as significantly more arousing and lower in valence compared to neutral items**
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+# aggregate rating df
+mean_rating_df <- aggregate(cbind(arousal_rating, valence_rating) ~ sj + 
+                              emotion, data = rating_df, FUN = mean)
+
+# Calculate M and SEM for valence rating
+descriptive_stats <- mean_rating_df %>%
+  group_by(emotion) %>%
+  dplyr::summarise(
+    mean = mean(valence_rating),
+    sem = sd(valence_rating)/sqrt(n())
+  ) %>%
+  mutate(rating = "valence",
+         mean = round(mean, 3),
+         sem = round(sem, 3))
+
+# First, reshape the data to wide format, so that each emotion level becomes a separate column
+wide_df <- mean_rating_df %>%
+  dplyr::select(-arousal_rating) %>%
+  pivot_wider(names_from = emotion, values_from = valence_rating)
+
+# Now run the paired t-test
+t_result <- t.test(wide_df$neutral, wide_df$negative, paired = TRUE)
+
+# Compute Cohen's d
+d_result <- cohen.d(wide_df$neutral, wide_df$negative, paired = TRUE)
+
+valence_stats <- descriptive_stats %>%
+  unite("mean_sem", mean, sem, sep= " (") %>%
+  mutate(mean_sem = paste0(mean_sem, ")")) %>%
+  spread(emotion, mean_sem) %>%
+  dplyr::select(rating, neutral, negative) %>%
+  mutate(`t (df)` = paste0(round(t_result$statistic, 3), 
+                           " (", round(t_result$parameter,3), ")"),
+         p = t_result$`p.value`,
+         `d [95% CI]` = paste0(round(d_result$estimate, 3), 
+                             " [", round(d_result$conf.int["lower"], 3), ", ", 
+                             round(d_result$conf.int["upper"], 3), "]"))
+
+
+# Calculate M and SEM for arousal rating
+descriptive_stats <- mean_rating_df %>%
+  group_by(emotion) %>%
+  dplyr::summarise(
+    mean = mean(arousal_rating),
+    sem = sd(arousal_rating)/sqrt(n())
+  ) %>%
+  mutate(rating = "arousal",
+         mean = round(mean, 3),
+         sem = round(sem, 3))
+
+# First, reshape the data to wide format, so that each emotion level becomes a separate column
+wide_df <- mean_rating_df %>%
+  dplyr::select(-valence_rating) %>%
+  pivot_wider(names_from = emotion, values_from = arousal_rating)
+
+# Now run the paired t-test
+t_result <- t.test(wide_df$neutral, wide_df$negative, paired = TRUE)
+# Compute Cohen's d
+d_result <- cohen.d(wide_df$neutral, wide_df$negative, paired = TRUE)
+
+reshaped_df <- descriptive_stats %>%
+  unite("mean_sem", mean, sem, sep= " (") %>%
+  mutate(mean_sem = paste0(mean_sem, ")")) %>%
+  spread(emotion, mean_sem) %>%
+  dplyr::select(rating, neutral, negative) %>%
+  mutate(`t (df)` = paste0(round(t_result$statistic, 3), 
+                           " (", round(t_result$parameter,3), ")"),
+         p = t_result$`p.value`,
+         `d [95% CI]` = paste0(round(d_result$estimate, 3), 
+                             " [", round(d_result$conf.int["lower"], 3), ", ", 
+                             round(d_result$conf.int["upper"], 3), "]")) %>%
+  rbind(valence_stats)
+
+reshaped_df <- round_p(reshaped_df, p_col = ncol(reshaped_df)-1)
+
+# Apply the rounding function to the 'p' column
+reshaped_df <- round_p(reshaped_df, p_col = which(colnames(reshaped_df) == "p"))
+
+# Print the table using kable
+knitr::kable(reshaped_df, caption = "valence and arousal rating", 
+             format = "markdown", digits = 3)
+
+```
+<br><br>
+
+#### **Emotionally negative items were significantly more often recalled than neutral items**
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+mean_df <- behav_df %>% 
+  mutate(subsMemory = as.numeric(subsMemory)-1) %>%
+  group_by(sj, emotion) %>%
+  dplyr::summarise(
+    recalled_items = sum(subsMemory, na.rm = TRUE),
+    mean_subsMemory = (recalled_items / 30) * 100
+  ) %>%
+  dplyr::select(-recalled_items)
+
+# Calculate M and SEM for missed responses per run
+descriptive_stats <- mean_df %>%
+  group_by(emotion) %>%
+  dplyr::summarise(
+    mean = mean(mean_subsMemory),
+    sem = sd(mean_subsMemory)/sqrt(n())
+  ) %>%
+  mutate(mean = round(mean, 3),
+         sem = round(sem, 3))
+
+# First, reshape the data to wide format, so that each emotion level becomes a separate column
+wide_df <- mean_df %>%
+  pivot_wider(names_from = emotion, values_from = mean_subsMemory)
+
+# Now run the paired t-test
+t_result <- t.test(wide_df$neutral, wide_df$negative, paired = TRUE)
+# Compute Cohen's d
+d_result <- cohen.d(wide_df$neutral, wide_df$negative, paired = TRUE)
+
+reshaped_df <- descriptive_stats %>%
+  unite("mean_sem", mean, sem, sep= " (") %>%
+  mutate(mean_sem = paste0(mean_sem, ")")) %>%
+  spread(emotion, mean_sem) %>%
+  dplyr::select(neutral, negative) %>%
+  mutate(`t (df)` = paste0(round(t_result$statistic, 3), 
+                           " (", round(t_result$parameter,3), ")"),
+         p = t_result$`p.value`,
+         `d [95% CI]` = paste0(round(d_result$estimate, 3), 
+                             " [", round(d_result$conf.int["lower"], 3), ", ", 
+                             round(d_result$conf.int["upper"], 3), "]")) 
+# Apply the rounding function to the 'p' column
+reshaped_df <- round_p(reshaped_df, p_col = which(colnames(reshaped_df) == "p"))
+
+# Print the table using kable
+knitr::kable(reshaped_df, caption = "free recall performance", 
+             format = "markdown", digits = 3)
+
+```
+#### **Figure 1b:** immediate enhancement of emotional memory 
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+plot_free_recall(mean_df)
+
+```
+
+***
+## **Univariate analyses**
+- load **univariate_df.csv**
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+file_name <- 'univariate'
+raw_univ_df <- read.csv(file.path(input_dir, paramExtr_folder, 
+                                  paste0(file_name, '_df.csv'))) %>%
+  mutate(sj = factor(sj),
+          run_num = as.numeric(factor(run)), # create a factor version of run with levels 1, 2, 3
+          run_centered = run_num - 2,# mean_center run
+          emotion = factor(emotion, levels = c("neutral","negative")),
+          subsMemory = factor(subsMemory, levels = c(0,1))) %>%
+          dplyr::group_by(ROI) %>%
+          mutate(beta_z = scale(beta)) %>%
+          ungroup()
+
+# prepare individual dfs
+neoc_df <- subset(raw_univ_df, grepl("^LH_", ROI) | grepl("^RH_", ROI))
+aMTL_df <- subset(raw_univ_df, grepl("^HCa", ROI) | grepl("^Amy", ROI))
+pmMTL_df <- subset(raw_univ_df, grepl("^HCm", ROI) | grepl("^HCp", ROI))
+
+```
+
+<br>
+
+### Trajectory of **anterior medial temporal lobe** involvement across repeated memory encoding distinguishes memory formation of emotional and neutral events
+- run linear mixed models with linear increase predictor run, the factors emotion and subsequent memory and the random intercept of subject and item in anterior MTL
+- Estimate confidence intervalls for FDR-corrected, significant memory × run × emotion fixed effect estimates via Bootstrapping 1000 estimations utilizing parallelization 
+- post hoc tests and marginal effects plots 
+
+  > NOTE: result summary is printed by a function which always speaks of *clusters*, although here we have no clusters but individual regions 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+this_df <-  aMTL_df
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 4
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_univ_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+# Save for later use
+ saveRDS(models_list, file = file.path(output_dir, "LMM_aMTL_list.RDS"))
+
+## check LMM results
+
+load(file = file.path(output_dir, "LMM_aMTL_list.RData")) # loads previously saved models list
+
+this_df <- aMTL_df
+ROIs <- unique(this_df$ROI)
+mixed_df <- get_mixed_df(ROIs, models_list)
+
+### check LMM results
+# Perform FDR correction
+memory_predictor <- "subsMemory"
+mixed_df <- run_FDR_cor(mixed_df)
+result <- extract_results(mixed_df, memory_predictor)
+
+# only memory-related significant results
+this_stat_df <-  result$sign_memory_df %>%
+  dplyr::mutate(effect = rename_effect(effect))
+# df with all statistics of sign ROIs
+sign_ROIs <- unique(this_stat_df$ROI)
+
+effect_df <- this_stat_df %>% 
+  dplyr::select(ROI,effect) %>%
+  mutate(lat = case_when(
+           substr(ROI, nchar(ROI), nchar(ROI)) == "R" ~ "right",
+           substr(ROI, nchar(ROI), nchar(ROI)) == "L" ~ "left",
+           TRUE ~ NA_character_ # For safety, in case there are other values
+         ),
+         nii_name = ROI,
+         network = "aMTL") 
+  
+non_sign_df <- mixed_df %>%
+  anti_join(this_stat_df, by = "ROI") %>%
+  dplyr::mutate(all_effects = rename_effect(effect))%>%
+  mutate(lat = case_when(
+           substr(ROI, nchar(ROI), nchar(ROI)) == "R" ~ "right",
+           substr(ROI, nchar(ROI), nchar(ROI)) == "L" ~ "left",
+           TRUE ~ NA_character_ # For safety, in case there are other values
+         )) %>%
+    mutate(
+    short_label = case_when(
+      str_detect(ROI, "HCa") ~ "aHC",
+      str_detect(ROI, "Amy") ~ "amy",
+      TRUE ~ NA_character_
+    ),
+    full_label = case_when(
+      str_detect(ROI, "HCa") ~ "anterior hippocampus",
+      str_detect(ROI, "Amy") ~ "amygdala",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::select(ROI, short_label, full_label, lat, rand,
+                effect, all_effects, T, Df, Beta, Pfdr) 
+
+full_LMM_df <- mixed_df %>%
+  filter(ROI %in% sign_ROIs) %>%
+  dplyr::mutate(all_effects = rename_effect(effect)) %>%
+  dplyr::select(-effect) %>%
+  left_join(dplyr::select(effect_df, ROI, effect, lat), by = "ROI") %>%
+  mutate(
+    short_label = case_when(
+      str_detect(ROI, "HCa") ~ "aHC",
+      str_detect(ROI, "Amy") ~ "amy",
+      TRUE ~ NA_character_
+    ),
+    full_label = case_when(
+      str_detect(ROI, "HCa") ~ "anterior hippocampus",
+      str_detect(ROI, "Amy") ~ "amygdala",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::select(ROI, short_label, full_label, lat, rand,
+                effect, all_effects, T, Df, Beta, Pfdr)
+
+# get bootstrapped confidence intervals
+# Subset models_list to only models with keys in ROIs
+ROIs <- unique(full_LMM_df$ROI)
+selected_models <- models_list[names(models_list) %in% ROIs] # select only models for sign ROIs
+
+# Apply bootstrap_CI to each selected model
+results_list <- lapply(selected_models, bootstrap_CI)
+
+# Usage
+bootstrap_df <- prepare_bootstrapped_CIs(results_list, selected_models)
+
+# Merge the CIs with full_LMM_df
+full_LMM_df <- full_LMM_df %>%
+  left_join(bootstrap_df, by = c("ROI", "all_effects")) 
+
+CI_df <- full_LMM_df %>%
+  dplyr::select(ROI, effect, all_effects, lower_CI, upper_CI)
+
+full_LMM_df <- this_LMM_df %>%
+  left_join(CI_df, by = c("ROI", "effect", "all_effects")) %>%
+  dplyr::select(-rand) %>%
+  dplyr::select(-Pfdr, everything(), Pfdr)
+
+# Filter effects with Pfdr < 0.05 and check if CI includes zero
+significant_effects_df <- full_LMM_df %>%
+  filter(effect == all_effects & Pfdr < 0.05) %>%
+  mutate(CI_includes_zero = (lower_CI < 0 & upper_CI > 0) | (lower_CI > 0 & upper_CI < 0))
+
+col_order <- setdiff(names(significant_effects_df), c("CI_includes_zero", "Pfdr"))
+
+significant_effects_df <- significant_effects_df %>% 
+  dplyr::select(all_of(col_order), Pfdr) # no change
+
+## post hoc tests and marginal effects plots
+#full_LMM_df <- readRDS(file = file.path(output_dir, "univ_LMM_aMTL_df.RDS"))
+
+this_stat_df <- full_LMM_df %>%
+  mutate(cluster_name = paste(lat, " anterior MTL")) #cluster label is needed for the print function to work
+
+contrast_df <- get_all_contrast_df(this_stat_df, models_list)  %>% 
+  unique()
+
+#contrast_df <- readRDS(file = file.path(output_dir, "univ_contrast_aMTL_df.RDS")) 
+
+posthoc_effect_df <- contrast_df %>%
+                    dplyr::select(full_label, posthoc_effect) %>% 
+  unique()
+
+this_stat_df <- left_join(this_stat_df, posthoc_effect_df, by = "full_label") %>% 
+  unique()
+
+peak_stats <- print_peak_stats(full_stat_df = this_stat_df, contrast_df)
+
+ROIs <- unique(this_stat_df$ROI)
+
+# no significant decrease over runs
+print_non_sign_contrast_summary(input_df = contrast_df, this_contrast = "neutral remembered > forgotten")
+
+# no significant difference at final encoding runs between emotion types
+print_non_sign_contrast_summary(input_df = contrast_df, this_contrast = "neg rem > forg in run 3 - neut rem > forg in run 3")
+
+p <- make_diff_marginal_plots(ROIs = ROIs, 
+                              this_contrast_df = contrast_df, 
+                              n_q = 2, n_p = 5)
+
+```
+
+####### Switch to **Python**
+- export combined t-maps for plotting in NetViewer 
+- glass brain plot for quick visualization
+
+```{python, echo=F, warning=F, message=F}
+
+# read in results from r analysis using the prefix r.
+result_df = pd.DataFrame(r.full_LMM_df)
+result_df['nii_name'] = result_df['ROI'] 
+
+##### export combined t-maps for plotting in NetViewer
+effect_df = result_df[result_df['all_effects'] == 'memory × run × emotion']
+
+new_img = setup_t_map(effect_df, full_roi_path)
+full_output_path = os.path.join(output_path, "t_maps")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(full_output_path):
+    os.makedirs(full_output_path)
+    
+file_name = "aMTL_full_int.nii"  # Change to your preferred filename
+full_file_path = os.path.join(full_output_path, file_name)
+new_img.to_filename(full_file_path)
+
+
+# plot glassbrain
+plotting.plot_glass_brain(new_img, colorbar=True, plot_abs=False, vmax=6, cmap='coolwarm')
+plt.show()
+    
+```
+
+<br>
+
+### No similar activation change in **mid-posterior MTL**
+- run LMM and get bootstrapped confidence intervals
+- print post-hoc tests
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+this_df <- pmMTL_df
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 4
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_univ_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+### save LMM in pmMTL
+this_df <- pmMTL_df
+memory_predictor <- "subsMemory"
+ROIs <- unique(this_df$ROI)
+nROIs <- length(ROIs)
+mixed_df <- get_mixed_df(ROIs = ROIs, models_list = models_list)
+
+### check LMM results
+# Perform FDR correction
+mixed_df <- run_FDR_cor(mixed_df)
+result <- extract_results(mixed_df, "subsMemory")
+
+# only memory-related significant results
+this_stat_df <- result$sign_memory_df %>%
+  mutate(effect = rename_effect(effect))
+
+# only memory-related significant results
+this_effect_df <- this_stat_df %>%
+  dplyr::select(ROI,effect) %>%
+    mutate(lat = case_when(
+           substr(ROI, nchar(ROI), nchar(ROI)) == "R" ~ "right",
+           substr(ROI, nchar(ROI), nchar(ROI)) == "L" ~ "left",
+           TRUE ~ NA_character_ # For safety, in case there are other values
+         ))
+
+# df with all statistics of sign ROIs
+sign_ROIs <- unique(this_stat_df$ROI)
+  
+non_sign_df <- mixed_df %>%
+  anti_join(this_stat_df, by = "ROI") %>%
+  mutate(effect = rename_effect(effect)) %>%
+  mutate(lat = case_when(
+           substr(ROI, nchar(ROI), nchar(ROI)) == "R" ~ "right",
+           substr(ROI, nchar(ROI), nchar(ROI)) == "L" ~ "left",
+           TRUE ~ NA_character_ # For safety, in case there are other values
+         )) %>%
+    mutate(
+    short_label = case_when(
+      str_detect(ROI, "HCp") ~ "pHC",
+      str_detect(ROI, "HCm") ~ "mHC",
+      TRUE ~ NA_character_
+    ),
+    full_label = case_when(
+      str_detect(ROI, "HCp") ~ "posterior hippocampus",
+      str_detect(ROI, "HCm") ~ "mid hippocampus",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::select(ROI, short_label, full_label, lat, 
+                effect, rand, T, Df, Beta, Pfdr) 
+
+full_LMM_df <- mixed_df %>%
+  filter(ROI %in% sign_ROIs) %>%
+  mutate(all_effects = rename_effect(effect),
+  t_rounded = T) %>%
+  dplyr::select(-effect) %>%
+  left_join(dplyr::select(this_effect_df, ROI, effect, lat), by = "ROI") %>%
+    mutate(
+    short_label = case_when(
+      str_detect(ROI, "HCp") ~ "pHC",
+      str_detect(ROI, "HCm") ~ "mHC",
+      TRUE ~ NA_character_
+    ),
+    full_label = case_when(
+      str_detect(ROI, "HCp") ~ "posterior hippocampus",
+      str_detect(ROI, "HCm") ~ "mid hippocampus",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::select(ROI, short_label, full_label, lat, 
+                effect, all_effects, T, Df, Beta, Pfdr)
+
+#### get bootstrapped CI 
+ROIs <- unique(full_LMM_df$ROI)
+
+# Subset models_list to only models with keys in ROIs
+selected_models <- models_list[names(models_list) %in% ROIs]
+
+# Apply bootstrap_CI to each selected model
+results_list <- lapply(selected_models, bootstrap_CI)
+
+# Usage
+bootstrap_df <- prepare_bootstrapped_CIs(results_list, selected_models)
+
+# Merge the CIs with full_LMM_df
+full_LMM_df <- full_LMM_df %>%
+  left_join(bootstrap_df, by = c("ROI", "all_effects")) 
+
+# Filter effects with Pfdr < 0.05 and check if CI includes zero
+significant_effects_df <- full_LMM_df %>%
+  filter(effect == all_effects & Pfdr < 0.05) %>%
+  mutate(CI_includes_zero = (lower_CI < 0 & upper_CI > 0) | (lower_CI > 0 & upper_CI < 0))
+
+print(unique(significant_effects_df$CI_includes_zero))
+
+# reorder df with significant results
+col_order <- setdiff(names(significant_effects_df), c("CI_includes_zero", "Pfdr"))
+significant_effects_df <- significant_effects_df %>% 
+  filter(CI_includes_zero == FALSE) %>%
+  dplyr::select(all_of(col_order), Pfdr)
+
+```
+
+#### posterior hippocampal activity during encoding was associated with subsequent memory, without an effect of run or emotion  
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+#models_list <- readRDS(file = file.path(output_dir, "univ_LMM_pmMTL_list.RDS"))
+#full_LMM_df <- readRDS(file = file.path(output_dir, "univ_LMM_pmMTL_df.RDS"))
+
+ROIs <- unique(this_stat_df$ROI)
+
+stat_df <- full_LMM_df %>%
+  mutate(cluster_name = case_when(
+    ROI == "HCpL" ~ "left pMTL",
+    ROI == "HCpR" ~ "right pMTL"
+  ))
+
+contrast_df <- get_all_contrast_df(stat_df, models_list)
+
+label_df <- subset(full_LMM_df, effect == all_effects) %>%
+            dplyr::select(ROI, full_label, short_label, lat)  %>% 
+            distinct(ROI, .keep_all = TRUE)
+
+posthoc_df <- contrast_df %>%
+  dplyr::select(ROI, effect, posthoc_effect) %>% 
+  unique()
+
+stat_df <- left_join(stat_df, posthoc_df, by = c("ROI","effect"))
+
+# print sign effect
+peak_stats <- print_peak_stats(stat_df, contrast_df)
+
+# print non significant effects for pMTL
+print_non_sign_LMM_summary(input_df = full_LMM_df)
+
+```
+
+####### Switch to **Python**
+- glassbrain plot of main effect subsequent memory in posterior hippocampus
+
+```{python, echo=F, warning=F, message=F}
+
+# read in results from r analysis using the prefix r.
+result_df = pd.DataFrame(r.full_LMM_df)
+result_df['nii_name'] = result_df['ROI'] 
+effect_df = result_df[result_df['all_effects'] == 'main effect memory']
+new_img = setup_t_map(effect_df, full_roi_path)
+plotting.plot_glass_brain(new_img, colorbar=True, plot_abs=False, vmax=6, cmap='coolwarm')
+plt.show()
+    
+```
+
+<br><br>
+
+### Opposite dynamics of **anterior and posterior neocortical cortices** across repeated encoding runs for emotional and neutral events 
+- run linear mixed model with linear increase predictor run, the factors emotion and subsequent memory and the random intercept of subject and item over 200 cortex parcellation. This part is ran in parallelization with a default of 70 cores. Change accordingly or run without parallelization
+- estimate confidence intervalls for FDR-corrected, significant memory × run × emotion fixed effect estimates via Bootstrapping 1000 estimations utilizing parallelization.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+this_df <- neoc_df %>%
+  dplyr::select(sj,item,ROI,subsMemory,emotion,run_centered,beta_z) %>%
+  droplevels()
+
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 5 # this runs best with only a few cores
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK", outfile="")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+clusterEvalQ(cl, library(dplyr))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_univ_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+#### compile results 
+mixed_df <- get_mixed_df(ROIs, models_list)
+anova_df <- get_anova_df(ROIs, models_list)
+
+### check LMM results ####
+memory_predictor <- "subsMemory"
+# Perform FDR correction
+mixed_df <- run_FDR_cor(mixed_df)
+# Find and save the results
+result <- extract_results(mixed_df, memory_predictor)
+#paste("Significant effects: ", paste(unique((result$sign_memory_df)$effect), collapse=", "))
+
+mem_df <- result$sign_memory_df %>%
+  mutate(effect = rename_effect(effect))
+
+# prepare model test analysis for lower level predictors regardless of reference level #
+# Perform FDR correction
+model_test_df <- run_FDR_cor(anova_df)
+
+# Find results
+withoutRef_result <- extract_results(model_test_df, memory_predictor) 
+
+withoutRef_mem_df <- withoutRef_result$sign_memory_df %>% 
+    mutate(effect = rename_effect(effect))
+
+# ROIs with three-way interaction effect ####
+int_df <- subset(mem_df, effect == "memory × run × emotion")
+int_ROIs <- unique(int_df$ROI)
+
+this_stat_df <- int_df %>% 
+       mutate(
+       lat = substr(ROI, 1, 2)) %>%
+dplyr::select(effect, ROI, lat, everything()) 
+
+# df with all statistics of sign ROIs
+sign_ROIs <- unique(this_stat_df$ROI)
+effect_df <- dplyr::select(this_stat_df, ROI, lat, effect)%>% unique()
+
+# get df with non-sign ROIs 
+non_sign_df <- mixed_df %>%
+  filter(ROI %in% sign_ROIs) %>%
+  dplyr::mutate(all_effects = rename_effect(effect),
+                effect = all_effects)
+
+# get df with all results for sign ROIs ####
+full_LMM_df <- mixed_df %>%
+  filter(ROI %in% sign_ROIs) %>%
+  mutate(all_effects = rename_effect(effect)) %>%
+  dplyr::select(-effect) %>%
+  left_join(effect_df, by = "ROI") %>%
+  dplyr::select(ROI, lat, effect, all_effects,
+                T, Df, Beta, Pfdr) %>%
+  mutate(lat = factor(lat, levels=c("LH","RH"), labels = c("left", "right")))
+
+#### get bootstrapped CI
+
+int_df <- subset(full_LMM_df, effect == "memory × run × emotion")
+
+ROIs <- unique(int_df$ROI)
+
+# Subset models_list to only models with keys in ROIs
+selected_models <- models_list[names(models_list) %in% ROIs]
+
+# Apply bootstrap_CI to each selected model
+results_list <- lapply(selected_models, bootstrap_CI)
+
+# Usage
+bootstrap_df <- prepare_bootstrapped_CIs(results_list, selected_models)
+
+# Merge the CIs with full_LMM_df
+fuller_LMM_df <- int_df %>%
+  left_join(bootstrap_df, by = c("ROI", "all_effects")) 
+
+# Filter effects with Pfdr < 0.05 and check if CI includes zero
+significant_effects_df <- int_df %>%
+  filter(effect == all_effects & Pfdr < 0.05) %>%
+  mutate(CI_includes_zero = (lower_CI < 0 & upper_CI > 0) | (lower_CI > 0 & upper_CI < 0))
+
+# Count number of significant effects where CI includes zero
+summary_df <- significant_effects_df %>%
+  group_by(ROI, all_effects) %>%
+  dplyr::summarize(
+    n = n(),
+    CI_includes_zero_count = sum(CI_includes_zero)
+  )
+
+# View the summary
+#sum(summary_df$CI_includes_zero_count) # all still sign.
+
+full_LMM_df <- readRDS(file = file.path(output_dir, "univ_LMM_neoc_df.RDS"))
+
+```
+
+####### Switch to **Python**
+- find central ROI coordinates, labels and clusters and add these labels to data frame
+- export combined t-maps for plotting in NetViewer
+- glass brain plot for quick visualization
+
+```{python, echo=F, warning=F, message=F}
+
+effects = []
+nii_names = []
+center_coordinates = []
+
+ read in results from r analysis using the prefix r.
+df = pd.DataFrame(r.full_LMM_df)
+df['nii_name'] = df['ROI']
+df = df[df['effect'] == df['all_effects']]
+df = find_center_coordinates(df, full_roi_path)
+
+result_df = find_clusters(df, full_roi_path)
+
+#### get overlap with clusters
+df = result_df.copy()
+# harvard oxford atlas from niilean data sets
+hoa_atlas = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-1mm')
+df['overlap_hoa'] = calculate_overlap_from_hoa(df, full_roi_path, hoa_atlas)
+
+# aal atlas
+aal = datasets.fetch_atlas_aal(version='SPM12')
+df['overlap_aal'] = calculate_overlap_from_aal(df, full_roi_path, aal)
+
+# Montreal atlas (.nii files in local folder)
+atlas_path = "../mri_atlas/Montreal/"
+df["overlap_montreal"] = calculate_roi_overlap(df, full_roi_path, atlas_path)
+
+# juelich atlas (.nii files in local folder)
+file_name_filters = {"prefix": "GM_", "substring": "thr25-1"}
+atlas_path = "C:/Users/valen/Documents/EncMem/mri_atlas/Juelich/"
+df['overlap_juelich'] = calculate_roi_overlap(df, full_roi_path, atlas_path, file_name_filters)
+# Define the regular expression pattern to match '-maxprob' followed by any characters
+# until the next '(' or end of string.
+pattern = r'-maxprob[^ (]*|GM_'
+# Use 'str.replace' to replace the matched patterns with an empty string.
+df['overlap_juelich'] = df['overlap_juelich'].str.replace(pattern, '', regex=True)
+
+# get maximum overlap over all columns
+df = add_max_overlap_columns(df)
+
+# add new labels based on overlap data 
+df = add_full_label(result_df)
+# remove IFG from temporal cluster
+df.loc[df['short_label'] == 'IFG', 'cluster_code'] = 'cluster3b'
+
+# Define the mapping from cluster_code to cluster_name
+cluster_mapping = {
+    'cluster4': 'right perisylvian',
+    'no cluster1': 'left angular gyrus',
+    'cluster1': 'left temporal',
+    'cluster3': 'right temporal',
+    'cluster3b': 'right IFG',
+    'cluster2': 'midpost cingular',
+    'no cluster2': 'right angular gyrus'
+}
+
+## Add the cluster_name column to labeled_df based on the cluster_code column
+df['cluster_name'] = df['cluster_code'].map(cluster_mapping)
+
+## If the cluster_code does not exist in the mapping fill with 'Unknown'
+df['cluster_name'].fillna('Unknown', inplace=True)
+
+
+# change labels accordingly after visual inspection of each ROI using
+#plot_effect_clusters(full_roi_path, labeled_df, mni_ims) # requires full_label, coords, cluster_name columns 
+
+#export combined t-maps for plotting in NetViewer
+#full_data_path = os.path.join(output_path, "labeled_univ_df.pkl")
+#df = pd.read_pickle(full_data_path)
+
+int_df = df[df['effect'] == 'memory × run × emotion']
+new_img = setup_t_map(int_df, full_roi_path)
+full_output_path = os.path.join(output_path, "t_maps")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(full_output_path):
+    os.makedirs(full_output_path)
+    
+file_name = "univ_neoc_int.nii"  # Change to your preferred filename
+full_file_path = os.path.join(full_output_path, file_name)
+new_img.to_filename(full_file_path)
+
+# plot glassbrain
+plt.close()
+plotting.plot_glass_brain(new_img, colorbar=True, plot_abs=False, vmax=6, cmap='coolwarm')
+plt.show()
+
+```
+
+####### Switch back to **R**
+- import these labels back into R and compute post-hoc tests
+- print result statistics for changes in neocortical activity across encoding repetitions
+
+<br><br>
+
+#### decrease in **anterior frontotemporal cortices** during recurring emotional event encoding
+```{r echo = FALSE, warning=FALSE, message=FALSE, results='asis'}
+label_df <- py$labeled_df %>%
+  mutate(lat = factor(lat, levels = c("LH","RH"), labels = c("left", "right")),
+         ROI = nii_name) %>%
+  dplyr::select(ROI, full_label, short_label, cluster_name)
+
+full_stat_df <- fuller_LMM_df %>% 
+                    #filter(effect == "memory × run × emotion") %>%
+                    left_join(label_df, by = "ROI") %>%
+                    dplyr::select(cluster_name, full_label, short_label, 
+                                  everything())
+
+contrast_df <- get_all_contrast_df(stat_df = full_stat_df, models_list)
+
+# split temporal clusters based on posthoc-effect
+# Group by cluster_name, then list unique non-NA posthoc_effects for each group
+cluster_posthoc_effects <- all_contrast_df %>%
+  filter(!is.na(posthoc_effect)) %>%
+  group_by(cluster_name) %>%
+  dplyr::summarise(unique_posthoc_effects = list(unique(posthoc_effect))) %>%
+  mutate(num_unique_posthoc_effects = lengths(unique_posthoc_effects))
+
+contrast_df <- contrast_df %>%
+  mutate(
+    cluster_name = case_when(
+      str_detect(cluster_name, "temporal") & str_detect(posthoc_effect, "decrease") ~ paste(lat, "anterior temporal"),
+      str_detect(cluster_name, "temporal") & str_detect(posthoc_effect, "increase") ~ paste(lat, "posterior temporal"),
+      TRUE ~ cluster_name
+    )
+  )
+
+posthoc_effect_df <- contrast_df %>%
+  dplyr::select(ROI, lat, full_label, short_label, cluster_name, posthoc_effect) %>%
+  unique()
+
+full_stat_df <- full_stat_df %>%
+  dplyr::select(-cluster_name) %>%  # Drop the current cluster_name
+  left_join(posthoc_effect_df, by = c("ROI", "full_label", "lat", "short_label"))  # Join by index columns
+
+#full_stat_df <- readRDS(file = file.path(output_dir, "univ_LMM_neoc_full_df.RDS"))
+
+stat_df <- subset(full_stat_df, effect == all_effects)
+
+# load contrasts
+contrast_df <- readRDS(file = file.path(output_dir, "univ_contrast_neoc_df.RDS")) 
+
+# decrease for emotionally negative
+decrease_ROI_results <- print_peak_stats(full_stat_df = subset(stat_df,
+                                                            posthoc_effect == 
+                                                             "decrease for emotionally negative"), 
+                                     contrast_df = subset(contrast_df,
+                                                          posthoc_effect == 
+                                                            "decrease for emotionally negative"))
+
+decrease_peak_ROIs <- names(decrease_ROI_results)
+
+non_sign_posthoc <- subset(contrast_df, 
+                           posthoc_effect == "decrease for emotionally negative" & 
+                          (cluster_name == "right IFG" | cluster_name == 
+                             "right anterior temporal" | 
+                             cluster_name == "left anterior temporal") & 
+                            p > 0.05 &
+                           ROI %in% decrease_peak_ROIs)
+
+# no significant increase for emotionally neutral in anterior fronto-temporal
+print_non_sign_contrast_summary(non_sign_posthoc, "neutral remembered > forgotten")
+
+# print non significant interaction contrasts within days
+contrast_t = "difference between emotions in memory type"
+
+sub_df <- subset(contrast_df, 
+                 contrast_type == contrast_t & 
+                 p > 0.05 &
+                 ROI %in% decrease_peak_ROIs) %>%
+  mutate(estimate = round(estimate, 3),
+         p = round(p, 3),
+         region = cluster_name,
+         EMM = estimate,
+         contrast = sapply(str_split(contrast, " "), function(x) paste(tail(x, 2), collapse = " "))) %>%
+  dplyr::select(region, contrast, EMM, p)
+rownames(sub_df)<-NULL
+
+# Print the table using kable
+knitr::kable(sub_df, caption = "cases without a significant difference between emotions in contrast remembered > forgotten", 
+             format = "markdown", digits = 3)
+
+# print non significant in slope for remembered > forgotten
+contrast_t = "slope related to successfull memory"
+#cat(paste0("\n\n No significant ", contrast_t," in the following conditions: "))
+sub_df <- subset(contrast_df, 
+                 contrast_type == contrast_t & 
+                 p > 0.05 &
+                 ROI %in% decrease_peak_ROIs) %>%
+  mutate(estimate = round(estimate, 3),
+         p = round(p, 3),
+         region = cluster_name,
+         condition = sapply(str_split(contrast, " "), function(x) paste(head(x, 1), collapse = " ")),
+         EMS = estimate
+         ) %>%
+  dplyr::select(region, condition, EMS, p)
+rownames(sub_df)<-NULL
+
+# Print the table using kable
+knitr::kable(sub_df, caption = "no significant change in activation over runs for neutral items", 
+             format = "markdown", digits = 3)
+
+```
+
+<br><br>
+
+#### increase in **posterior temporal and parietal cortices** during recurring neutral event encoding
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+# increase for emotionally neutral
+increase_peak_stats <- print_peak_stats(full_stat_df 
+                  = subset(stat_df, posthoc_effect == "increase for emotionally neutral" 
+                   ), 
+                  contrast_df = subset(contrast_df, posthoc_effect == "increase for emotionally neutral" 
+                  )
+)
+
+increase_peak_ROIs <- names(increase_peak_stats)
+
+# print non significant interaction contrasts within days
+contrast_t = "difference between emotions in memory type"
+#cat(paste0("\n\n No significant ", contrast_t," at **run 1** in these regions: "))
+sub_df <- subset(contrast_df, 
+                 contrast_type == contrast_t & 
+                 contrast == "neg rem > forg in run 1 - neut rem > forg in run 1" &
+                 p > 0.05 &
+                 ROI %in% increase_peak_ROIs) %>%
+  mutate(estimate = round(estimate, 3),
+         p = round(p, 3),
+         region = cluster_name,
+         EMM = estimate,
+         #contrast = sapply(str_split(contrast, " "), function(x) paste(tail(x, 2), collapse = " "))
+         ) %>%
+  dplyr::select(region, EMM, p)
+rownames(sub_df)<-NULL
+#print(sub_df)
+# Print the table using kable
+knitr::kable(sub_df, caption = "no significant difference between emotion in contrast remembered > forgotten in **run 1**", 
+             format = "markdown", digits = 3)
+
+```
+
+##### **Figure 3, lower panel:** Differential neocortical trajectories for repeated encoding of emotional and neutral events
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+top_ROIs <- union(decrease_peak_ROIs, increase_peak_ROIs)
+top_ROI_LMM_df <- subset(stat_df, ROI %in% top_ROIs)
+top_ROI_contrast_df <- subset(contrast_df, effect == "memory × run × emotion" & ROI %in% top_ROIs &
+       (cluster_name == "right angular gyrus" |
+       cluster_name == "left anterior temporal" |
+       cluster_name == "right anterior temporal" |
+       cluster_name == "left posterior temporal" |
+       cluster_name == "right posterior temporal" |
+       cluster_name == "right IFG" |
+       full_label == "parietal operculum"))
+
+ROIs <- unique(top_ROI_contrast_df$ROI)
+
+p <- make_diff_marginal_plots(ROIs, top_ROI_contrast_df, save = FALSE)
+
+```
+<br><br><br>
+
+***
+## **Multivariate Analayses**
+- read in **EES_df.csv** (includes item-wise encoding-similarity data in Fisher *z*-transformed *r*)
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+EES_raw_df <- read.csv(file.path(input_dir, paramExtr_folder, paste0('EES_df.csv'))) %>%
+  mutate(item = factor(item),
+         sj = factor(sj),
+         ROI = factor(ROI),
+         emotion = factor(emotion, levels=c("neutral", "negative")),
+         subsMemory = factor(subsMemory, levels=c(0,1))) #%>%
+
+EES_mean_df <- EES_raw_df %>%  
+  group_by(sj, emotion, item, subsMemory, ROI) %>%
+  dplyr::summarise(dplyr::across("EES", mean, .names = "{.col}")) %>%
+  mutate(EncRuns = "allEncRuns") %>%
+  ungroup() %>%
+  group_by(ROI)%>%
+  mutate(EES_centered = scale(EES, scale=FALSE)) %>%
+  ungroup() %>% 
+  dplyr::select(-EncRuns)
+
+# prepare individual dfs
+neoc_EES_df <- subset(EES_mean_df, grepl("^LH_", ROI) | grepl("^RH_", ROI))
+aMTL_EES_df <- subset(EES_mean_df, grepl("^HCa", ROI) | grepl("^Amy", ROI))
+pmMTL_EES_df <- subset(EES_mean_df, grepl("^HCm", ROI) | grepl("^HCp", ROI))
+
+```
+
+<br>
+
+### No association between encoding pattern similarity and subsequent memory in **anterior MTL**
+- run LMMs 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+# Get data from aMTL
+this_df <- aMTL_EES_df
+
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 5 # runs best with only a few cores
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK", outfile="")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+clusterEvalQ(cl, library(dplyr))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_EES_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+
+#### check LMM results
+## optionally read in prepared models list
+#models_list <- readRDS(file = file.path(output_dir, 
+#                                      "EES_LMM_aMTL_list.rds")) 
+
+memory_predictor <- "subsMemory"
+ROIs <- names(models_list)
+mixed_df <- get_mixed_df(ROIs, models_list, n_factors = 2)
+
+# mixed_df
+# Perform FDR correction
+cor_mixed_df <- run_FDR_cor(mixed_df) %>%
+  mutate(effect = rename_effect(effect))
+
+# Find and save the results
+ns_results <- cor_mixed_df %>%
+  mutate(effect = rename_effect(effect)) %>%
+  filter(str_detect(effect, "memory"))
+
+cat("\n\n No effect of encoding pattern stability in anterior MTL on subsequent memory: \n")
+# You can now call this function and pass your data frame
+print_non_sign_LMM_summary(ns_results)
+
+```
+
+<br>
+
+### No association between encoding pattern similarity and subsequent memory in **mid-posterior MTL**
+- run LMMs
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+# Get data from aMTL
+this_df <- pmMTL_EES_df
+
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 4 # runs best with only a few cores
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK", outfile="")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+clusterEvalQ(cl, library(dplyr))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_EES_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+#### check LMM results
+#models_list <- readRDS(file = file.path(output_dir, 
+#                             "EES_LMM_pmMTL_list.rds")) 
+
+## Save for later use
+memory_predictor <- "subsMemory"
+
+ROIs <- names(models_list)
+mixed_df <- get_mixed_df(ROIs, models_list, n_factors = 2)
+
+# mixed_df
+# Perform FDR correction
+cor_mixed_df <- run_FDR_cor(mixed_df) %>%
+  mutate(effect = rename_effect(effect))
+
+# Find and save the results
+ns_results <- cor_mixed_df %>%
+  mutate(effect = rename_effect(effect)) %>%
+  filter(str_detect(effect, "memory"))
+
+cat("\n\n No effect of encoding pattern stability in mid-posterior hippocampus on subsequent memory: \n")
+print_non_sign_LMM_summary(ns_results)
+
+```
+
+<br>
+
+### Emotional memory formation is associated with **stable neocortical pattern representations** across repetitions
+- run linear mixed model with the factors emotion and subsequent memory and the random intercept of subject and item over 200 cortex parcellation
+- compute confidence intervalls for FDR-corrected, significant memory × emotion fixed effect estimates via Bootstrapping 1000 estimations utilizing parallelization
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+this_df <- neoc_EES_df
+ROIs <- unique(this_df$ROI)
+
+n_cores <- 5 # runs best with only a few cores
+
+# Initialize a cluster with the number of cores
+cl <- makeCluster(n_cores, type = "PSOCK", outfile="")
+
+# Export necessary objects to the cluster
+clusterExport(cl, list("this_df", "ROIs"))
+
+# Load necessary packages on each node
+clusterEvalQ(cl, library(lme4))# always load before lmerTest
+clusterEvalQ(cl, library(lmerTest))
+clusterEvalQ(cl, library(dplyr))
+
+# Run the function in parallel
+models_list <- parLapply(cl, ROIs, run_LMM_for_EES_ROI, this_df)
+names(models_list) <- ROIs
+
+# Stop the cluster
+stopCluster(cl)
+
+#### check LMM
+
+memory_predictor <- "subsMemory"
+
+mixed_df <- get_mixed_df(ROIs, models_list, n_factors = 2)
+unique(mixed_df$effect)
+
+# Perform FDR correction
+cor_mixed_df <- run_FDR_cor(mixed_df)
+
+# Find and save the results
+rob_result <- extract_results(cor_mixed_df, memory_predictor)
+cortex_rob_mem_df <- rob_result$sign_memory_df 
+
+# reshape relevant results for plotting
+cortex_rob_mem_df <- rob_result$sign_memory_df %>%
+  mutate(lat = substr(ROI, 1, 2),
+         effect = rename_effect(effect)) %>%
+  dplyr::select(effect, ROI, lat, everything())
+
+ROIs <- unique(subset(cortex_rob_mem_df, grepl("×", effect))$ROI)
+
+# df with all statistics of sign ROIs
+effect_df <- dplyr::select(cortex_rob_mem_df, ROI, lat, effect) %>%
+  filter(ROI %in% ROIs)%>%
+  mutate(effect = rename_effect(effect))
+
+# get df with all results for sign ROIs 
+EES_stat_df <- cor_mixed_df %>%
+  filter(ROI %in% ROIs) %>%
+  mutate(all_effects = rename_effect(effect)) %>%
+  dplyr::select(-effect) %>%
+  left_join(effect_df, by="ROI") %>%
+  dplyr::select(ROI,lat, effect, all_effects,
+                T, Df, Beta, Pfdr) %>%
+  mutate(lat = factor(lat, levels=c("LH","RH"), labels = c("left", "right")))
+
+### get bootstrapped CI
+
+ROIs <- unique(EES_stat_df$ROI)
+
+# Subset models_list to only significant ROIs
+selected_models <- models_list[names(models_list) %in% ROIs]
+
+# Apply bootstrap_CI to each selected model
+results_list <- lapply(selected_models, bootstrap_CI)
+
+# Usage
+bootstrap_df <- prepare_bootstrapped_CIs(results_list, selected_models)
+
+# Merge the CIs with full_LMM_df
+full_EES_df <- EES_stat_df %>%
+  left_join(bootstrap_df, by = c("ROI", "all_effects")) 
+
+# Filter effects with Pfdr < 0.05 and check if CI includes zero
+significant_effects_df <- full_EES_int_df %>%
+  filter(effect == all_effects & Pfdr < 0.05) %>%
+  mutate(CI_includes_zero = (lower_CI < 0 & upper_CI > 0) | (lower_CI > 0 & upper_CI < 0))
+
+# Count number of significant effects where CI includes zero
+summary_df <- significant_effects_df %>%
+  dplyr::group_by(ROI, all_effects) %>%
+  dplyr::summarize(
+    n = n(),
+    CI_includes_zero_count = sum(CI_includes_zero)
+  )
+
+# View the summary
+print(summary_df) # all stays sign
+
+full_EES_df <- full_EES_df %>%
+  dplyr::select(-Pfdr, everything(), Pfdr)
+
+```
+
+####### Switch to **Python** 
+- find central ROI coordinates, labels and clusters 
+- export t-map in nifti format for plotting via NetViewer 
+- glass brain plot for quick visualization 
+
+```{python, echo=F, warning=F, message=F}
+
+effects = []
+nii_names = []
+center_coordinates = []
+
+# read in results from r analysis using the prefix r.
+df = pd.DataFrame(r.full_EES_df)
+df = df[df['effect'] == df['all_effects']]
+df['nii_name'] = df['ROI']
+
+df = find_center_coordinates(df, full_roi_path)
+
+result_df = find_clusters(df, full_roi_path)
+    
+df = result_df.copy()
+# harvard oxford atlas from niilean data sets
+hoa_atlas = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-1mm')
+df['overlap_hoa'] = calculate_overlap_from_hoa(df, full_roi_path, hoa_atlas)
+
+# aal atlas
+aal = datasets.fetch_atlas_aal(version='SPM12')
+df['overlap_aal'] = calculate_overlap_from_aal(df, full_roi_path, aal)
+
+# Montreal atlas (.nii files in local folder)
+atlas_path = "../mri_atlas/Montreal/"
+df["overlap_montreal"] = calculate_roi_overlap(df, full_roi_path, atlas_path)
+
+# juelich atlas (.nii files in local folder)
+file_name_filters = {"prefix": "GM_", "substring": "thr25-1"}
+atlas_path = "../mri_atlas/Juelich/"
+df['overlap_juelich'] = calculate_roi_overlap(df, full_roi_path, atlas_path, file_name_filters)
+# Define the regular expression pattern to match '-maxprob' followed by any characters
+# until the next '(' or end of string.
+pattern = r'-maxprob[^ (]*|GM_'
+# Use 'str.replace' to replace the matched patterns with an empty string.
+df['overlap_juelich'] = df['overlap_juelich'].str.replace(pattern, '', regex=True)
+
+# get maximum overlap over all columns
+df = add_max_overlap_columns(df)
+
+# add label according to overlap and visual inspection ####
+df = add_full_label(df)
+
+# Merge the DataFrames on the 'nii_name' column
+labeled_df = pd.merge(result_df, df[['nii_name', 'full_label', #'short_label']], 
+on = 'nii_name', how = 'left')
+
+# relabel PoCS cluster
+labeled_df.loc[labeled_df['short_label'] == 'PoCS', 'cluster_code'] = 'cluster2b'
+
+## Define cluster naming
+cluster_mappings = {
+        'cluster1': 'left lateral OFC',
+        'cluster2': 'right SPL',
+        'no cluster1': 'ACC',
+        'no cluster2': 'left STS',
+        'no cluster4': 'right STS',
+        'cluster2b': 'right PoCS',
+        'no cluster3': 'right medial OFC'}
+        
+# Adding the new 'cluster_name' column to the DataFrame based on #the mapping
+labeled_df['cluster_name'] = labeled_df['cluster_code'].map(cluster_mappings)
+
+# change labels accordingly after visual inspection of each ROI using
+#full_roi_path = roi_path + '/cortex_17networks/'
+#plot_effect_clusters(full_roi_path, labeled_df, mni_ims) # requires full_label, coords, cluster_name columns 
+
+# save labeled_df in case you want to use it later
+labeled_df.to_pickle(full_pickle_path)
+
+##### export combined t-maps for plotting in NetViewer
+#full_data_path = os.path.join(output_path,"labeled_EES_df.pkl")
+#labeled_df = pd.read_pickle(full_data_path)
+new_img = setup_t_map(labeled_df, full_roi_path)
+full_output_path = os.path.join(output_path, "t_maps")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(full_output_path):
+    os.makedirs(full_output_path)
+    
+file_name = "EES.nii"  # Change to your preferred filename
+full_file_path = os.path.join(full_output_path, file_name)
+new_img.to_filename(full_file_path)
+
+# plot glassbrain
+plotting.plot_glass_brain(new_img, colorbar=True, plot_abs=False, vmax=6, cmap='coolwarm')
+plt.show()
+
+```
+
+####### Switch back to **R**
+- import labels from python and compute post-hoc contrasts 
+- post-hoc tests for emotion x memory interaction 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+label_df <- py$labeled_df %>%
+  dplyr::select(ROI, full_label, short_label, cluster_name)
+
+int_EES_df <- EES_stat_df %>%
+  filter(effect == all_effects)%>%
+  left_join(CI_df, by = "ROI") %>%
+  left_join(label_df, by = "ROI")%>%
+  dplyr::select(-Pfdr, everything(), Pfdr)
+
+ROIs <- unique(int_EES_df$ROI)
+
+contrast_df <- get_all_contrast_df(stat_df = int_EES_df, models_list) %>%
+  dplyr::select(effect, cluster_name, lat, short_label, full_label, 
+                ROI, posthoc_effect, contrast_type, contrast, everything()) %>%
+  dplyr::select(-p, everything(), p)
+
+posthoc_effect_df <- contrast_df %>%
+  dplyr::select(ROI, posthoc_effect) %>% 
+  unique()
+
+int_EES_df <- left_join(int_EES_df, posthoc_effect_df, by = "ROI") %>%
+  dplyr::select(effect, cluster_name, lat, short_label, full_label, ROI, 
+                posthoc_effect, everything()) %>%
+  dplyr::select(-Pfdr, everything(), Pfdr)
+
+
+#### print results for peak ROIs and save plots
+
+#int_EES_df <- readRDS(file = file.path(output_dir, 
+#                      "EES_LMM_neoc_df.rds"))
+
+#contrast_df <- readRDS(file = file.path(output_dir, 
+#                     "EES_contrast_neoc_df.rds")) 
+
+int_EES_df["posthoc_effect"] <- "higher encoding similarity for negative compared to neutral items"
+contrast_df["posthoc_effect"] <- "higher encoding similarity for negative compared to neutral items"
+
+peak_df <- print_peak_stats(full_stat_df = int_EES_df, 
+                            contrast_df = contrast_df)
+peak_ROIs <- names(peak_df)
+
+
+sub_df <- subset(contrast_df, ROI == "LH_DefaultA_PFCm_3" | ROI == "LH_DefaultB_PFCv_2" | ROI == "RH_LimbicB_OFC_1")
+print_non_sign_contrast_summary(sub_df, "neut rem > forg")
+
+sub_df <- subset(contrast_df, ROI %in% peak_ROIs & contrast_type == "difference between memory categories") %>%
+  mutate(emotion = factor(contrast, levels=c("neut rem > forg","neg rem > forg"), labels=c("neutral", "negative")),
+         EMM = estimate, 
+         region = cluster_name) %>%
+  dplyr::select(region, emotion, EMM, df, lower_CI, upper_CI, p) 
+
+sub_df <- round_three(sub_df, start_col= which(colnames(sub_df) == "EMM"))
+sub_df <- round_p(sub_df, p_col= which(colnames(sub_df) == "p"))
+
+# Print the table using kable
+knitr::kable(sub_df, caption = "contrast remembered > forgotten per emotion", 
+             format = "markdown", digits = 3)
+
+
+plot_list <-  EES_int_marginal_plots(ROIs = peak_ROIs, 
+                                     this_contrast_df = contrast_df, 
+                                     int_EES_df = int_EES_df)
+
+for (r in peak_ROIs){
+  print(plot_list[[r]])
+}
+
+```
+
+<br><br>
+
+***
+## **Mediation analysis**
+#### Amygdala activity at first exposure modulates emotional memory enhancement via neocortical pattern stability over repetitions
+1. run moderated mediation
+2. apply FDR correction
+3. find linear change in conditional indirect effects
+4. compute index of moderated mediation
+
+<br>
+
+#### results of oucome- and mediator-model 
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+aMTL_ROIs <- c("HCaR", "AmyL")
+all_results_list <- list()
+for (aMTL_ROI in aMTL_ROIs){
+  # amygdala activation at initial encoding
+  aMTL_initial_df <- subset(aMTL_df, ROI == aMTL_ROI) %>% 
+    filter(run_centered == -1) %>%
+    group_by(sj) %>%
+    mutate(beta_z = scale(beta),
+           beta_ROI = ROI) %>%
+    ungroup() %>%
+    dplyr::select(sj,item, beta_ROI, beta_z, emotion, subsMemory)
+  
+  # only EES activity in ROIs that showed sign emotion effect
+  EES_select_df <- subset(EES_neoc_df, ROI %in% peak_ROIs) # only significant EES ROIs
+  # unique EES_ROI values to run the function on
+  unique_EES_ROIs <- unique(EES_select_df$ROI)
+  
+  n_cluster <- 5 
+  
+  # Create cluster
+  cl <- makeCluster(n_cluster, type = "PSOCK")
+  
+  # Export all necessary variables and libraries to each core
+  clusterExport(cl, varlist = c("mediation_analysis", "initial_aMTL_df", 
+                                "EES_select_df", "extract_mediation_summary"))
+  
+  clusterEvalQ(cl, {
+    library(lme4)
+    library(dplyr)
+    library(mediation)
+  })
+  
+  # Apply the function in parallel using parLapply
+  result_list <- parLapply(cl, unique_EES_ROIs, function(ROI_EES_i) {
+    mediation_analysis(ROI_EES_i, aMTL_df, EES_select_df)
+  })
+  
+  # Stop the cluster
+  stopCluster(cl)
+  
+  # Name keys based on the current aMTL_ROI
+  names(result_list) <- paste(aMTL_ROI, unique_EES_ROIs, sep = "_")
+  
+  # Combine the result into the all_results_list
+  all_results_list <- c(all_results_list, result_list)
+  
+}
+
+saveRDS(all_results_list, file = file.path(output_dir, 
+                                           "moderated_mediation_list.rds")) # save with compression
+
+# Initialize an empty list to store individual data frames
+final_result_list <- list()
+
+# Loop through each key (EES_ROI) in result_list
+for (EES_ROI in names(all_results_list)) {
+  sub_result <- all_results_list[[EES_ROI]]
+  
+  # Loop through each mediation model ("med_mean_Mod", "med_high_Mod", "med_low_Mod")
+  for (mod_key in c("med_high_Mod", "med_low_Mod", "med_mean_Mod")) {
+    med_model <- sub_result[[mod_key]]
+    stats_df <- as.data.frame(med_model[["stats"]])
+    
+    # Add row names as a new column named 'effect'
+    stats_df$effect <- rownames(stats_df)
+    rownames(stats_df) <- NULL
+    
+    # Add additional columns to store EES_ROI, moderator_value, and mediation status
+    stats_df$EES_ROI <- EES_ROI
+    stats_df$moderator_value <- mod_key
+    stats_df$mediation <- med_model[["mediation"]]
+    
+    # Add to the final result list
+    final_result_list <- append(final_result_list, list(stats_df))
+  }
+}
+
+# Combine individual data frames into a single data frame
+final_result_df <- do.call(rbind, final_result_list) %>%
+  # Split EES_ROI into two parts: the prefix and the rest
+  mutate(
+    beta_ROI = sub("_(.*)", "", EES_ROI),
+    EES_ROI = sub("^[^_]+_", "", EES_ROI)
+  )
+
+### apply FDR correction
+cor_df <- data.frame()
+
+for (m in unique(final_result_df$moderator_value)){
+  #for (e in unique(final_result_df$effect)){
+  sub_df <- final_result_df  %>%
+    mutate(Pvalue = `p-value`,
+           ROI = EES_ROI) %>%
+    mutate(Pvalue = ifelse(Pvalue < 1e-20, 1e-20, Pvalue))  %>% 
+    unique()  # if Pvalue is 0 then add the lowest possible number to allow for fdr correction 
+  
+  cor_df <- run_FDR_cor(sub_df)
+}
+
+
+#### update evaluation of moderation according to FDR-corrected p-values
+
+final_cor_df <- data.frame()
+for (m in unique(cor_df$moderator_value)){
+  for (r in unique(cor_df$EES_ROI)){
+    for (b in unique(cor_df$beta_ROI)){
+      
+      sub_df <- cor_df[cor_df$moderator_value == m & 
+                         cor_df$EES_ROI == r &
+                         cor_df$beta_ROI == b, ] %>% unique()
+      
+      mediation_status <- NULL
+      
+      acme_pval <- sub_df[sub_df$effect == "ACME (average)", ]$Pfdr
+      ade_pval <- sub_df[sub_df$effect == "ADE (average)", ]$Pfdr
+      prop_med_pval <- sub_df[sub_df$effect == "Prop. Mediated (average)", ]$Pfdr
+      
+      if (acme_pval < 0.05 && ade_pval < 0.05 && prop_med_pval < 0.05) {
+        mediation_status <- "Partial Mediation"
+      } else if (acme_pval < 0.05 && ade_pval >= 0.05 && prop_med_pval < 0.05) {
+        mediation_status <- "Full Mediation"
+      } else {
+        mediation_status <- "No Mediation"
+      }
+      
+      sub_df$mediation_status <- mediation_status
+      final_cor_df <- rbind(final_cor_df, sub_df)
+    }
+  }  
+}
+
+
+#final_cor_df <-  readRDS(file = file.path(output_dir, "moderated_mediation_df.rds"))
+
+# identify EES_ROIs where all mediation_status are 'No Mediation'
+no_mediation_rois <- final_cor_df %>%
+  group_by(EES_ROI, beta_ROI) %>%
+  dplyr::summarise(all_no_mediation = all(mediation_status == "No Mediation")) %>%
+  filter(all_no_mediation) %>%
+  pull(EES_ROI, beta_ROI)
+
+# create a new composite key in both data.frames
+final_cor_df$composite_key <- paste(final_cor_df$EES_ROI, final_cor_df$beta_ROI, sep = "_")
+no_mediation_composite_keys <- paste(names(no_mediation_rois), no_mediation_rois, sep = "_")
+
+# filter out rows from final_cor_df where the composite key matches
+final_cor_df_filtered <- final_cor_df %>%
+  filter(!(composite_key %in% no_mediation_composite_keys))
+
+keys <- unique(final_cor_df_filtered$composite_key)
+
+# check for numerical increase or decrease in mediated effect in linear ROIs
+linear_df <- final_cor_df_filtered
+# create a new column in final_cor_df to store the numerical trend for each EES_ROI
+linear_df$numerical_trend <- NA
+
+  for (r in unique(linear_df$composite_key)) {
+  
+    sub_df <- linear_df[linear_df$composite_key == r &
+                          linear_df$effect == "ACME (average)", ]
+    mean_value <- sub_df$Estimate[sub_df$moderator_value == "med_mean_Mod"]
+    low_value <- sub_df$Estimate[sub_df$moderator_value == "med_low_Mod"]
+    high_value <- sub_df$Estimate[sub_df$moderator_value == "med_high_Mod"]
+    trend <- NA
+    
+    if (mean_value < low_value & high_value < mean_value ) {
+      trend <- "numerical decrease"
+    } else if ( low_value < mean_value & mean_value < high_value) {
+      trend <- "numerical increase"
+    }
+    
+    linear_df$numerical_trend[linear_df$composite_key == r ] <- trend
+  }
+
+# after assigning trends, remove rows where numerical_trend is NA
+linear_df <- linear_df[!is.na(linear_df$numerical_trend), ]
+
+result_lin_df <- linear_df %>%
+  dplyr::select(EES_ROI, beta_ROI, numerical_trend)%>%
+  unique()
+
+# get combinations that show a numerical trend + mediation
+result_lin_df$combo_key <- paste(result_lin_df$EES_ROI, result_lin_df$beta_ROI, sep = "_")
+
+# Create a vector of the unique combinations you want to process
+desired_combinations <- unique(result_lin_df$combo_key)
+
+mod_ROIs <- unique(result_lin_df$beta_ROI)
+med_ROIs <- unique(result_lin_df$EES_ROI)
+
+combinations <- expand.grid(EES_ROI = med_ROIs, aMTL_ROI = mod_ROIs) 
+
+# create corresponding combo_key in original combinations frame
+combinations$combo_key <- paste(combinations$EES_ROI, combinations$aMTL_ROI, sep = "_")
+
+# filter the combinations to only include the desired ones
+combinations <- combinations[combinations$combo_key %in% desired_combinations, ]
+
+## compute index of moderated mediation
+
+# amygdala activation at initial encoding
+aMTL_df <- subset(raw_univ_df, ROI %in% mod_ROIs & run_centered == -1) %>% 
+  group_by(sj, ROI) %>%
+  mutate(beta_z = scale(beta),
+         beta_ROI = ROI) %>%
+  ungroup() %>%
+  dplyr::select(sj,item, beta_ROI, beta_z, emotion, subsMemory)
+
+EES_select_df <- subset(neoc_EES_df, ROI %in% med_ROIs) 
+
+# Initialize cluster
+cl <- makeCluster(nrow(combinations), type = "PSOCK")
+
+# Export libraries to each cluster
+clusterEvalQ(cl, {
+  library(lme4)
+  library(boot)
+  library(boot.pval)
+  library(dplyr)
+})
+
+# Export variables to each cluster (add any additional variables you need)
+clusterExport(cl, list("aMTL_df", "EES_select_df", "combinations", 
+                       "bootstrap_index_of_moderated_mediation", "run_bootstrap"))
+
+bootstrap_results <- parLapply(cl, 1:nrow(combinations), function(i) {
+  run_bootstrap(combinations[i,], EES_select_df, aMTL_df)
+})
+
+# Stop the cluster
+stopCluster(cl)
+
+# Name the results with combinations of EES_ROI and aMTL_ROI
+names(bootstrap_results) <- apply(combinations, 1, function(x) paste(x[1], x[2], sep = "_"))
+
+bootstrap_results <- readRDS(file = file.path(output_dir, 
+                     "bootstrap_results_indexModMed_list.rds")) 
+
+# Initialize an empty data frame to store results
+result_df <- data.frame(EES_ROI = character(),
+                        beta_ROI = character(),
+                        lower_CI = numeric(),
+                        upper_CI = numeric())
+
+# Loop through the bootstrap_results list
+for (i in seq_along(bootstrap_results)) {
+  
+  # Identify EES_ROI and beta_ROI from the names
+  name_str <- names(bootstrap_results)[i]
+  
+  beta_ROI <- ifelse(grepl("HCaR", name_str), "HCaR", "AmyL")
+  
+  EES_ROI <- gsub(paste0("_", beta_ROI), "", name_str)
+  
+  # Extract CI_BCA
+  ci_bca <- bootstrap_results[[i]]$CI_BCA
+  
+  if(!is.null(ci_bca)){
+    lower_CI <- ci_bca$bca[4]
+    upper_CI <- ci_bca$bca[5]
+  } else {
+    lower_CI <- NA
+    upper_CI <- NA
+  }
+  
+  # Append to the data frame
+  result_df <- rbind(result_df, data.frame(EES_ROI, beta_ROI, lower_CI, upper_CI))
+}
+
+# drop non-significant rows
+result_df <- result_df[!(result_df$lower_CI <= 0 & result_df$upper_CI >= 0), ]
+
+# Ensure that linear_df has only the combinations that exist in result_df
+linear_df_filtered <- semi_join(linear_df, result_df, by = c("EES_ROI", "beta_ROI"))
+
+# Merge the filtered linear_df with result_df to add the columns
+final_df <- inner_join(linear_df_filtered, result_df, by = c("EES_ROI", "beta_ROI")) %>%
+  mutate(moderator_value = factor(moderator_value, levels = c("med_low_Mod", 
+                                                                "med_mean_Mod",
+                                                                "med_high_Mod"),
+                                   labels = c("low", "average", "high")))
+
+### check estimates from models 
+
+# amygdala activation at initial encoding
+Amy_df <- subset(raw_univ_df, ROI == "AmyL" & run_centered == -1) %>% 
+  group_by(sj,ROI)%>%
+  mutate(beta_z = scale(beta),
+         beta_ROI = ROI) %>%
+  ungroup() %>%
+  dplyr::select(sj,item, beta_ROI, beta_z, emotion, subsMemory)
+
+EES_sub_df <- subset(neoc_EES_df, ROI == "RH_DorsAttnA_SPL_3") %>%
+  group_by(sj)%>%
+  mutate(EES_ROI = ROI,
+         M = scale(EES, scale = FALSE)) %>%
+  ungroup() %>%
+  dplyr::select(sj, item, EES_ROI, emotion, EES, M, subsMemory)
+
+# join EES and univ df
+merged_df <- inner_join(EES_sub_df, Amy_df, by = c("sj", "item", "subsMemory", "emotion")) %>%
+  mutate(Y = subsMemory,
+         X = factor(emotion, levels=c("neutral","negative")), # emotion as predictor
+         M = M, # within-subject centered EES as mediator
+         Z = beta_z) # witin-sj centered initial Amy activity as modulator
+
+  # Fit the mediator model
+  med_fit <- lmer(EES ~ X * Z + (1|sj), data = merged_df)
+  
+  # Fit the outcome model
+  out_fit <- glmer(Y ~ X + Z + M + X:Z + M:Z + (1|sj), 
+                             data = merged_df, 
+                             family = "binomial",
+                             control = glmerControl(optimizer = "bobyqa", 
+                                                    optCtrl = list(maxfun = 2e5)))
+  
+  # prepare models for printing
+  mediator_model <- as.data.frame(summary(med_fit)$coefficients)
+  mediator_model["fixed_effect"] <- rownames(mediator_model)
+  rownames(mediator_model) <- NULL
+  
+  mediator_model <- mediator_model %>%
+    filter(fixed_effect != "(Intercept)") %>%
+    mutate(effect_description = factor(fixed_effect, levels = c("Xnegative",
+                                                                "Z",
+                                                                "Xnegative:Z"),
+                                       labels = c("main effect emotion", 
+                                                  "main effect initial amygdala activity", 
+                                                  "interaction between emotion and initial amygdala activity")
+    ),
+    outcome = "SPL encoding pattern stability",
+    p = `Pr(>|t|)`,
+    t_value = `t value`
+    ) %>%
+    dplyr::select(-`Pr(>|t|)`, -`t value`) %>%
+    dplyr::select(outcome, effect_description, fixed_effect, everything()) %>%
+    dplyr::select(-p, everything(), p) 
+  
+  
+  
+  outcome_model <- as.data.frame(summary(out_fit)$coefficients)
+  outcome_model["fixed_effect"] <- rownames(outcome_model)
+  rownames(outcome_model) <- NULL
+  
+  outcome_model <- outcome_model %>%
+    filter(fixed_effect != "(Intercept)") %>%
+    mutate(effect_description = factor(fixed_effect, levels = c("Xnegative",
+                                                                "Z",
+                                                                "M",
+                                                                "Xnegative:Z",
+                                                                "Z:M"),
+                                       labels = c("main effect emotion", 
+                                                  "main effect initial amygdala activity", 
+                                                  "main effect SPL pattern stability",
+                                                  "interaction between emotion and initial amygdala activity",
+                                                  "interaction between SPL pattern stability and amygdala activity")
+    ),
+    outcome = "subsequent free recall",
+    p = `Pr(>|z|)`,
+    z_value = `z value`
+    ) %>%
+    dplyr::select(-`Pr(>|z|)`, -`z value`) %>%
+    dplyr::select(outcome, effect_description, fixed_effect, everything()) %>%
+    dplyr::select(-p, everything(), p) 
+  
+  # print model results
+  print_mediation_model_resuts(mediator_model)
+  # print model results
+  print_mediation_model_resuts(outcome_model)
+  
+  # Extract coefficients
+  med_coefs <- fixef(med_fit)
+  out_coefs <- fixef(out_fit)
+  
+  # Calculate the index of moderated mediation
+  index_moderated_mediation <- as.numeric(med_coefs['Xnegative:Z']) *
+    as.numeric(out_coefs['M'])
+
+```
+
+<br>
+
+#### results of conditional moderated mediation analysis 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+final_df <- final_df %>%
+  mutate(mediation_status = case_when(
+         mediation_status == "Partial Mediation" ~ "partial mediation",
+         TRUE ~ mediation_status # Keeps other values the same
+         ),
+         mediator = "SPL pattern similarity",
+         moderator = "initial amygdala activity",
+         moderator_value = factor(moderator_value, levels = c("low", "average", "high"))
+  ) %>%
+  dplyr::select(mediation_status, mediator, moderator, moderator_value, effect, numerical_trend, Estimate,
+                `95% CI Lower`, `95% CI Upper` , lower_CI, upper_CI, Pfdr)
+
+print_conditional_mediation_effects(final_df)
+
+```
+
+<br>
+
+#### **Figure 5, right panel**: Initial amygdala aytivity significantly moderated emotional memory enhancement via superior parietal pattern stability 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+plot_index_moderated_mediation(final_df, save = FALSE)
+
+```
+
+####### Switch to **Python**
+- export only SPL t-map for **Figure 5, left panel**
+- glass brain plot for quick visualization
+
+```{python, echo=F, warning=F, message=F}
+#full_data_path = os.path.join(output_path, "labeled_EES_df.pkl")
+#labeled_df = pd.read_pickle(full_data_path)
+labeled_df = labeled_df[labeled_df["nii_name"] == "RH_DorsAttnA_SPL_3"]
+new_img = setup_t_map(labeled_df, full_roi_path)
+full_output_path = os.path.join(output_path, "t_maps")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(full_output_path):
+    os.makedirs(full_output_path)
+    
+file_name = "EES_SPL.nii"  # Change to your preferred filename
+full_file_path = os.path.join(full_output_path, file_name)
+new_img.to_filename(full_file_path)
+
+# plot glassbrain
+plotting.plot_glass_brain(new_img, colorbar=True, plot_abs=False, vmax=6, cmap='coolwarm')
+plt.show()
+
+```
+
