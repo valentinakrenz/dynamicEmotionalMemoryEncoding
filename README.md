@@ -10,7 +10,6 @@ http://doi.org/10.25592/uhhfdm.13783
 
 ---
 ### parameter extraction
-extraction and RSAs
 to extract univariate parameters and run RSAs, the beta images as *fMRI_processed-sj-###.7z* need to be unzipped into a common parent file (e.g. *data/*) and transformed from 4D to 3D images
 **fmri_paramExtract/extract_trialwise_betaImages_from4Dgz.ipynb** shows how to do this using Python
 
@@ -26,9 +25,9 @@ results are stored at the repository as *fmri_paramExtr.7z* and are used for sta
 ### statistical analyses
 **stat_analysis/EncMem_stat_analyses.Rmd** runs all statistical analyses in R and some fMRI applications in Python and exports nifti images for plotting in BrainNet Viewer.
 
-*stat_analysis/my_functions* includes R and Python functions that are used in this script.
+*stat_analysis/my_functions* includes R and Python functions that are used in **EncMem_stat_analyses.Rmd**.
 
-The folder *results* and its subfolder *results/R_results* include dataframes which can be loaded inside **EncMem_stat_analyses.Rmd** to reproduce all results and figures without having to run more extensive, parallelized computations.
+The folder *results* and its subfolder *results/R_results* include dataframes which can be loaded inside **EncMem_stat_analyses.Rmd** to reproduce all results and figures without having to run parallelized computations.
 
 ---
 
